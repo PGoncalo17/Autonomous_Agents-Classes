@@ -11,7 +11,7 @@ api_key = os.environ["OLLAMA_API_KEY"]
 model = os.environ["OLLAMA_MODEL"]
 llm = ChatOllama(model=model, 
                 base_url=base_url,
-                temperature = 1.0,
+                temperature = 0.3,
                 top_k = 15,
                 top_p = 1,
                 min_p = 0.3,

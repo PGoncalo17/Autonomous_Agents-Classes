@@ -34,7 +34,12 @@ embeddings = HuggingFaceEmbeddings(
 persist_directory = "./chroma_db"
 
 if not os.path.exists(persist_directory):
-    loader = TextLoader("rag_document.txt")
+    doc_path = "rag_document.txt"
+    if not os.path.exists(doc_path):
+        with open(doc_path, "w", encoding="utf-8") as f:
+            f.write("Company XYZ was founded in 2021. Its main product is SmartRAG.")
+
+    loader = TextLoader(doc_path, encoding="utf-8")
     documents = loader.load()
 
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
@@ -53,8 +58,10 @@ else:
 
 retriever_obj = vectorstore.as_retriever(search_kwargs={"k": 3})
 
+
 @tool
 def retriever(query: str) -> str:
+    """Searches and retrieves relevant document chunks from the vector database based on the user's query."""
     docs = retriever_obj.invoke(query)
     
     context_chunks = []
@@ -67,9 +74,9 @@ def retriever(query: str) -> str:
             
     return "\n\n".join(context_chunks)
 
+
 tools = [retriever]
 llm_with_tools = llm.bind_tools(tools)
-
 
 SYSTEM_PROMPT = SystemMessage(
     content=(
@@ -77,19 +84,19 @@ SYSTEM_PROMPT = SystemMessage(
         "INSTRUCTIONS:\n"
         "1. Always check if you need to retrieve information from the internal knowledge base to answer the user accurately.\n"
         "2. If the user asks specific questions about domain facts, call the `retriever` tool with an appropriate query.\n"
-        "3. Evaluate the retrieved information. If it is relevant, construct your answer based on it.\n"
-        "4. If the retrieved information is insufficient, you may re-query or state that you do not have enough information.\n"
-        "5. For casual greetings or general statements, respond directly without calling the tool."
+        "3. Evaluate the retrieved information and construct your answer based on it.\n"
+        "4. If the retrieved information is insufficient, state that you do not have enough information.\n"
+        "5. For casual greetings or general conversational statements, respond directly without invoking tools."
     )
 )
 
+
 def call_model(state: MessagesState):
     messages = state["messages"]
+    filtered_messages = [m for m in messages if not isinstance(m, SystemMessage)]
+    prompt_messages = [SYSTEM_PROMPT] + filtered_messages
     
-    if not isinstance(messages[0], SystemMessage):
-        messages = [SYSTEM_PROMPT] + messages
-        
-    response = llm_with_tools.invoke(messages)
+    response = llm_with_tools.invoke(prompt_messages)
     return {"messages": [response]}
 
 
@@ -106,13 +113,13 @@ app = graph.compile()
 
 
 if __name__ == "__main__":
-    print("\nChatBot: Hi! What can I do for you today?\n")
+    print("\nChatBot: Hi! How can I help you today?\n")
 
     conversation_history = []
 
     while True:
         user_input = input("You: ")
-        if user_input.lower() == "exit":
+        if user_input.lower() in ["exit", "quit"]:
             print("ChatBot: Goodbye!")
             break
 

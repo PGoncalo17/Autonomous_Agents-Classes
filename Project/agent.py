@@ -91,7 +91,8 @@ def chat():
             break
         if user_input.lower() == "/reset":
             reset()
-            print("Agent: Conversation history cleared. \n")
+            os.system("cls" if os.name == "nt" else "clear")
+            print("Agent: Conversation history cleared. Hello again! How can I help you?\n")
             continue
 
         response = answer(user_input)

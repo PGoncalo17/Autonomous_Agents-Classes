@@ -24,6 +24,8 @@ from langchain_core.tools import tool
 # STORAGE_DIR environmental parameter.
 # Your agent should use the session ID given by the environment parameter
 # SESSION_ID to select conversation memory.
+load_dotenv()
+
 STORAGE_DIR = Path(os.environ.get("AGENT_STORAGE_DIR", "./agent_data")).resolve()
 SESSION_ID = os.environ.get("AGENT_SESSION_ID", "default")
 
@@ -31,7 +33,6 @@ STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = str(STORAGE_DIR / "conversation_history.db")
 
 
-load_dotenv()
 
 base_url = os.environ["OLLAMA_BASE_URL"]
 api_key = os.environ["OLLAMA_API_KEY"]

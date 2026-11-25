@@ -2,6 +2,8 @@
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+import json
+
 from langchain_ollama import ChatOllama
 
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -31,12 +33,13 @@ SESSION_ID = os.environ.get("AGENT_SESSION_ID", "default")
 
 STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = str(STORAGE_DIR / "conversation_history.db")
-
+MEMORY_PATH = STORAGE_DIR /"user_memory.json"
 
 
 base_url = os.environ["OLLAMA_BASE_URL"]
 api_key = os.environ["OLLAMA_API_KEY"]
 model = os.environ["OLLAMA_MODEL"]
+
 llm = ChatOllama(model=model, 
                 base_url=base_url,
                 temperature = 0.0,
@@ -47,6 +50,29 @@ llm = ChatOllama(model=model,
                 )
 
 
+# --- PERSISTENT USER MEMORY (CROSS_SESSION) --- #
+def _load_user_memories() -> list[str]:
+    if not MEMORY_PATH.exists():
+        return []
+    try:
+        return json.loads(MEMORY_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+@tool
+def save_user_memory(fact: str) -> str:
+    """Save an important, permanent fact or preference about the user (e.g., name, role, preferences) so it is remembered across future sessions."""
+    fact = fact.strip()
+    if not fact:
+        return "Empty fact ignored"
+    memories = _load_user_memories()
+    if fact not in memories:
+        memories.append(fact)
+        MEMORY_PATH.write_text(json.dumps(memories, ensure_ascii=False, indent=2), encoding="utf-8")
+    return f"Saved to long-term memory: {fact}"
+
+
+# --- TOOLS & RAG --- #
 web_search_tool = TavilySearch(max_results=3)
 
 embeddings = OllamaEmbeddings(
@@ -74,14 +100,14 @@ def retriever(query: str) -> str:
     if not docs:
         return "No relevant documents found in the local knowledge base."
 
-    context_chuks = []
+    context_chunks = []
     for doc in docs:
         source = doc.metadata.get("source", "unknown")
-        context_chuks.append(f"[Source: {source}]\n{doc.page_content}")
+        context_chunks.append(f"(Source: {source})\n{doc.page_content}")
 
-    return "\n\n---\n\n".join(context_chuks)
+    return "\n\n---\n\n".join(context_chunks)
 
-tools = [web_search_tool, retriever]
+tools = [web_search_tool, retriever, save_user_memory]
 llm_with_tools = llm.bind_tools(tools)
 
 
@@ -93,7 +119,7 @@ SYSTEM_PROMPT = """You are a helpful, accurate, and secure AI assistant. Your pr
 1. **Source Attribution:** Whenever you use information retrieved from the local knowledge base (RAG) or from web searches (Tavily), you MUST explicitly cite and identify your sources in the final response.
 2. **Epistemic Honesty:** Base your answers strictly on the provided context, memory, and tool outputs. If the available information is insufficient or contradictory to answer the user's request, clearly state what is missing. Never fabricate facts, sources, or user preferences.
 3. **Source Routing & Tool Usage:**
-   - **Conversation Memory:** ALWAYS check the messages in the current conversation history FIRST for facts, names, or preferences the user already told you, BEFORE calling any tools. If the answer is in the conversation history, answer directly without calling `retriever`.
+   - **Conversation & Persistent Memory:** ALWAYS check the current conversation history and the KNOWN USER FACTS (LONG-TERM MEMORY) section below FIRST for facts, names, or preferences the user already told you, BEFORE calling retriever. When the user shares personal details, preferences, or facts about themselves (e.g., their name, job, likes/dislikes), call save_user_memory to store them permanently.
    - **Local Knowledge Base (`retriever`):** Use the `retriever` tool whenever the question relates to local files, private projects, ingested notes, or specific facts that might be stored in the knowledge base.
    - **Web Search (`tavily_search`):** Use the web search tool ONLY when up-to-date, real-time, or external public information is required.
    - **Direct Answer:** Answer directly WITHOUT calling any tools for greetings, introductions (e.g., "My name is..."), general concepts, math, coding, or casual conversation.
@@ -110,19 +136,21 @@ SYSTEM_PROMPT = """You are a helpful, accurate, and secure AI assistant. Your pr
 - Be concise, objective, and well-structured."""
 
 
-
 def call_model(state: MessagesState):
-    messages = [SystemMessage(content=SYSTEM_PROMPT)] + state["messages"]
+    memories = _load_user_memories()
+    memory_block = "\n".join(f"- {m}" for m in memories) if memories else "No long-term facts stored yet."
+    full_system_prompt = f"{SYSTEM_PROMPT}\n\n### KNOWN USER FACTS (LONG-TERM MEMORY)\n{memory_block}"
+
+    messages = [SystemMessage(content=full_system_prompt)] + state["messages"]
     response = llm_with_tools.invoke(messages)
     return {"messages": [response]}
 
 graph = StateGraph(MessagesState)
 graph.add_node("agent", call_model)
-graph.add_node("tools", ToolNode(tools))
+graph.add_node("tools", ToolNode(tools, handle_tool_errors=True))
 graph.add_edge(START, "agent")
 graph.add_conditional_edges("agent", tools_condition)
 graph.add_edge("tools", "agent")
-
 
 
 def chat():
@@ -137,12 +165,11 @@ def chat():
             break
         if user_input.lower() == "/reset":
             reset()
-            os.system("cls" if os.name == "nt" else "clear")
             print("Agent: Conversation history cleared. Hello again! How can I help you?\n")
             continue
 
         response = answer(user_input)
-        print(f"agent: {response}\n")
+        print(f"Agent: {response}\n")
 
 
 def answer(prompt: str) -> str:
@@ -181,6 +208,10 @@ def reset() -> None:
     # YOUR IMPLEMENTATION STARTS HERE.
     with SqliteSaver.from_conn_string(DB_PATH) as memory:
         memory.delete_thread(SESSION_ID)
+
+    if MEMORY_PATH.exists():
+        MEMORY_PATH.unlink()
+
     return None
 
 

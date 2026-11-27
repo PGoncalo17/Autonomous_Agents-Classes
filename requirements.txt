@@ -11,3 +11,4 @@ langgraph-checkpoint-sqlite
 python-dotenv
 sentence-transformers
 chromadb
+langchain-chroma
